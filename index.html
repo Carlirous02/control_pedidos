@@ -104,13 +104,13 @@ footer{font-size:12px;color:#65756a;padding:8px}
 <label for="from">Desde</label><input id="from" type="date">
 <label for="to">Hasta</label><input id="to" type="date">
 <div class="actions">
-<button id="report">Preparar informe</button>
+<button id="reportBtn">Preparar informe</button>
 <button id="print" class="secondary">Imprimir / Guardar PDF</button>
 </div>
 <div id="reportPreview"></div>
 </section>
 
-<section id="report" class="hidden"></section>
+<section id="reportArea" class="hidden"></section>
 <footer>Datos locales en este navegador. Exporta copias periódicas y guárdalas fuera del iPhone.</footer>
 
 <script>
@@ -149,7 +149,7 @@ function id(){return Date.now().toString(36)+"-"+Math.random().toString(36).slic
 function showTab(tab){
  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
  ["new","history","backup"].forEach(t=>$(t).classList.toggle("hidden",t!==tab));
- $("report").classList.add("hidden");
+ $("reportArea").classList.add("hidden");
  if(tab==="history")renderHistory();
 }
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
