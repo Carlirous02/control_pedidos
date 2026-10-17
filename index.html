@@ -1,0 +1,256 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#286344">
+<title>Control de pedidos</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#20352a;background:#f3f6f3}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:720px;padding:16px 14px 40px}
+header{background:#286344;color:white;padding:22px;border-radius:18px;margin-bottom:16px}
+h1{font-size:24px;margin:0 0 6px}h2{font-size:19px}
+p{line-height:1.45}
+nav{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:14px 0}
+button,.btn{border:0;border-radius:10px;padding:12px;background:#286344;color:white;font-size:15px;font-weight:600;cursor:pointer}
+nav button{background:#dce8df;color:#234d38}
+nav button.active{background:#286344;color:white}
+section,.panel{background:white;border:1px solid #dce5dd;border-radius:15px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:14px;font-weight:600;margin:12px 0 5px}
+input,select{width:100%;padding:12px;border:1px solid #cbd6cd;border-radius:9px;background:white;font-size:16px;color:#20352a}
+.row{display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:8px;align-items:end}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.secondary{background:#e7eee8;color:#234d38}
+.danger{background:#a52e2e}
+.small{font-size:13px;color:#64746a}
+.item{border-bottom:1px solid #e2e8e3;padding:12px 0}
+.item:last-child{border:0}
+.itemtop{display:flex;justify-content:space-between;gap:8px}
+.hidden{display:none!important}
+#notice{padding:10px;background:#e4f1e7;border-radius:9px;display:none;margin:10px 0}
+footer{font-size:12px;color:#65756a;padding:8px}
+@media print{
+ body{max-width:none;background:white;padding:0;color:black}
+ header,nav,.noprint,footer{display:none!important}
+ section{border:0;padding:0;margin:0}
+ #report{display:block!important}
+ table{width:100%;border-collapse:collapse;font-size:9pt}
+ th,td{border:1px solid #999;padding:5px;text-align:center}
+ th:first-child,td:first-child{text-align:left}
+ h2{margin:0 0 10px}
+ @page{size:A4 landscape;margin:8mm}
+}
+</style>
+</head>
+<body>
+<header>
+<h1>Control de pedidos</h1>
+<div>Registro de entradas · Limpieza y consumibles</div>
+</header>
+<nav class="noprint">
+<button class="active" data-tab="new">Nuevo pedido</button>
+<button data-tab="history">Historial</button>
+<button data-tab="backup">Copias e informes</button>
+</nav>
+<div id="notice" role="status"></div>
+
+<section id="new">
+<h2>Registrar una entrada</h2>
+<label for="date">Fecha de recepción</label>
+<input id="date" type="date">
+<div class="row">
+<div>
+<label for="product">Producto</label>
+<select id="product"></select>
+</div>
+<div>
+<label for="qty">Cantidad</label>
+<input id="qty" type="number" min="0.01" step="any" placeholder="0">
+</div>
+</div>
+<div class="actions">
+<button id="add">Añadir producto</button>
+</div>
+<h3>Productos de este pedido</h3>
+<div id="draft"><p class="small">Todavía no has añadido productos.</p></div>
+<div class="actions">
+<button id="save">Guardar pedido completo</button>
+<button id="clearDraft" class="secondary">Vaciar lista</button>
+</div>
+<p class="small">Los cambios se guardan al confirmar el pedido. No cierres la página antes de guardarlo.</p>
+</section>
+
+<section id="history" class="hidden">
+<h2>Historial de pedidos</h2>
+<label for="search">Filtrar por fecha o producto</label>
+<input id="search" type="search" placeholder="Ej. papel o 2026-10">
+<div id="historyList"></div>
+</section>
+
+<section id="backup" class="hidden">
+<h2>Copias de seguridad</h2>
+<p>Descarga el archivo JSON para guardar todos los pedidos. Para trasladar los datos a otro iPhone, importa ese archivo allí.</p>
+<div class="actions">
+<button id="export">Descargar copia completa</button>
+<button id="csv" class="secondary">Exportar CSV</button>
+</div>
+<label for="restore">Restaurar una copia JSON</label>
+<input id="restore" type="file" accept=".json,application/json">
+<p class="small">Restaurar sustituye el historial actual. Exporta primero una copia del teléfono si quieres conservarlo.</p>
+<hr>
+<h2>Informe para imprimir</h2>
+<label for="from">Desde</label><input id="from" type="date">
+<label for="to">Hasta</label><input id="to" type="date">
+<div class="actions">
+<button id="report">Preparar informe</button>
+<button id="print" class="secondary">Imprimir / Guardar PDF</button>
+</div>
+<div id="reportPreview"></div>
+</section>
+
+<section id="report" class="hidden"></section>
+<footer>Datos locales en este navegador. Exporta copias periódicas y guárdalas fuera del iPhone.</footer>
+
+<script>
+const PRODUCTS=[
+"PAPEL Z","PAPEL HIGIÉNICO","PAPEL SECA MANOS",
+"LIMPIA BAÑOS (A)","FREGA SUELOS (M)","JABÓN MANOS",
+"LIMPIA CRISTALES","LEJÍA","GUANTES","FREGONA","ESCOBA",
+"PLUMERO","PALOS","PAÑOS","BOLSA BASURA G","BOLSA BASURA P",
+"AMBIENT LIQ","AMBIENT MIC","PAÑUELOS CAJA"
+];
+const KEY="controlPedidos_v1";
+const $=id=>document.getElementById(id);
+let orders=[],draft=[];
+const today=new Date();
+const isoDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+$("date").value=isoDate(today);
+$("from").value=isoDate(new Date(today.getFullYear(),today.getMonth(),1));
+$("to").value=isoDate(today);
+$("product").innerHTML=PRODUCTS.map(p=>`<option>${p}</option>`).join("");
+
+function notice(msg){
+ $("notice").textContent=msg;$("notice").style.display="block";
+ window.scrollTo({top:0,behavior:"smooth"});
+}
+function load(){
+ try{orders=JSON.parse(localStorage.getItem(KEY)||"[]");
+ if(!Array.isArray(orders))throw Error();
+ }catch(e){orders=[];notice("No se pudo leer el historial local. No importes nada hasta comprobar si tienes una copia.");}
+}
+function persist(){
+ try{localStorage.setItem(KEY,JSON.stringify(orders));return true}
+ catch(e){notice("No se pudo guardar. Exporta una copia y libera espacio.");return false}
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function id(){return Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8)}
+function showTab(tab){
+ document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
+ ["new","history","backup"].forEach(t=>$(t).classList.toggle("hidden",t!==tab));
+ $("report").classList.add("hidden");
+ if(tab==="history")renderHistory();
+}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+
+function renderDraft(){
+ $("draft").innerHTML=draft.length?draft.map((p,i)=>`
+ <div class="item"><div class="itemtop"><div><b>${esc(p.product)}</b><br><span class="small">${p.qty} unidades</span></div>
+ <button class="danger" data-remove="${i}">Quitar</button></div></div>`).join(""):'<p class="small">Todavía no has añadido productos.</p>';
+ $("draft").querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>{
+ draft.splice(Number(b.dataset.remove),1);renderDraft()
+ });
+}
+$("add").onclick=()=>{
+ const product=$("product").value,qty=Number($("qty").value);
+ if(!$("date").value)return notice("Indica la fecha.");
+ if(!Number.isFinite(qty)||qty<=0)return notice("Introduce una cantidad mayor que cero.");
+ draft.push({product,qty});
+ $("qty").value="";renderDraft();
+};
+$("clearDraft").onclick=()=>{draft=[];renderDraft()};
+$("save").onclick=()=>{
+ const date=$("date").value;
+ if(!date)return notice("Indica la fecha.");
+ if(!draft.length)return notice("Añade al menos un producto.");
+ orders.push({id:id(),date,created:new Date().toISOString(),items:draft.map(p=>({...p}))});
+ if(!persist()){orders.pop();return}
+ draft=[];renderDraft();notice("Pedido guardado correctamente.");
+};
+function renderHistory(){
+ const q=$("search").value.trim().toLocaleLowerCase("es");
+ const list=[...orders].sort((a,b)=>b.date.localeCompare(a.date));
+ const filtered=list.filter(o=>(o.date+" "+o.items.map(i=>i.product).join(" ")).toLocaleLowerCase("es").includes(q));
+ $("historyList").innerHTML=filtered.length?filtered.map(o=>`
+ <div class="item"><div class="itemtop"><b>${esc(o.date)}</b>
+ <button class="danger" data-del="${esc(o.id)}">Eliminar</button></div>
+ ${o.items.map(i=>`<div>${esc(i.product)} — <b>${i.qty}</b></div>`).join("")}
+ </div>`).join(""):'<p class="small">No hay pedidos que coincidan.</p>';
+ $("historyList").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+ if(!confirm("¿Eliminar este pedido? Exporta una copia antes si tienes dudas."))return;
+ orders=orders.filter(o=>o.id!==b.dataset.del);
+ if(persist())renderHistory();
+ });
+}
+$("search").oninput=renderHistory;
+
+function download(name,data,type){
+ const blob=new Blob([data],{type});
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement("a");a.href=url;a.download=name;
+ document.body.appendChild(a);a.click();a.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+$("export").onclick=()=>{
+ const backup={app:"control-pedidos",version:1,exportedAt:new Date().toISOString(),products:PRODUCTS,orders};
+ download("copia-pedidos-"+isoDate(new Date())+".json",JSON.stringify(backup,null,2),"application/json");
+ notice("Copia preparada. Comprueba que se ha descargado y guárdala fuera del iPhone.");
+};
+$("csv").onclick=()=>{
+ const rows=[["Pedido","Fecha","Producto","Cantidad"]];
+ orders.forEach(o=>o.items.forEach(i=>rows.push([o.id,o.date,i.product,i.qty])));
+ const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(";")).join("\r\n");
+ download("pedidos.csv","\uFEFF"+csv,"text/csv;charset=utf-8");
+};
+$("restore").onchange=async e=>{
+ const file=e.target.files[0];if(!file)return;
+ try{
+ const obj=JSON.parse(await file.text());
+ if(obj.app!=="control-pedidos"||obj.version!==1||!Array.isArray(obj.orders))throw Error("Archivo no reconocido.");
+ const valid=obj.orders.every(o=>typeof o.id==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(o.date)&&Array.isArray(o.items)&&o.items.every(i=>PRODUCTS.includes(i.product)&&Number.isFinite(i.qty)&&i.qty>0));
+ if(!valid)throw Error("El archivo contiene datos inválidos.");
+ if(!confirm("Se reemplazarán los "+orders.length+" pedidos actuales por "+obj.orders.length+" pedidos de la copia. ¿Continuar?"))return;
+ const old=orders;orders=obj.orders;
+ if(!persist()){orders=old;return}
+ notice("Copia restaurada correctamente.");renderHistory();
+ }catch(err){alert("No se pudo restaurar: "+err.message)}
+ finally{e.target.value=""}
+};
+
+function makeReport(){
+ const from=$("from").value,to=$("to").value;
+ if(!from||!to||from>to)return notice("Revisa las fechas del informe.");
+ const selected=orders.filter(o=>o.date>=from&&o.date<=to).sort((a,b)=>a.date.localeCompare(b.date));
+ const dates=[...new Set(selected.map(o=>o.date))].sort();
+ const sums={};
+ PRODUCTS.forEach(p=>sums[p]={});
+ selected.forEach(o=>o.items.forEach(i=>sums[i.product][o.date]=(sums[i.product][o.date]||0)+i.qty));
+ const table=`<h2>Control de entradas de pedidos</h2><p>Periodo: ${esc(from)} a ${esc(to)}</p>
+ <table><thead><tr><th>Producto</th>${dates.map(d=>`<th>${esc(d)}</th>`).join("")}<th>Total</th></tr></thead><tbody>
+ ${PRODUCTS.map(p=>{let total=0;return `<tr><td>${esc(p)}</td>${dates.map(d=>{const n=sums[p][d]||0;total+=n;return `<td>${n||""}</td>`}).join("")}<td>${total||""}</td></tr>`}).join("")}
+ </tbody></table>`;
+ $("report").innerHTML=table;
+ $("reportPreview").innerHTML=`<p>Pedidos encontrados: ${selected.length}. Fechas de recepción: ${dates.length}.</p>`;
+ $("report").classList.remove("hidden");
+ notice("Informe preparado. Pulsa Imprimir / Guardar PDF.");
+}
+$("report").onclick=makeReport;
+$("print").onclick=()=>{
+ if(!$("report").innerHTML)return makeReport();
+ window.print();
+};
+load();renderDraft();
+</script>
+</body>
+</html>
