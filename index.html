@@ -114,143 +114,479 @@ footer{font-size:12px;color:#65756a;padding:8px}
 <footer>Datos locales en este navegador. Exporta copias periódicas y guárdalas fuera del iPhone.</footer>
 
 <script>
-const PRODUCTS=[
-"PAPEL Z","PAPEL HIGIÉNICO","PAPEL SECA MANOS",
-"LIMPIA BAÑOS (A)","FREGA SUELOS (M)","JABÓN MANOS",
-"LIMPIA CRISTALES","LEJÍA","GUANTES","FREGONA","ESCOBA",
-"PLUMERO","PALOS","PAÑOS","BOLSA BASURA G","BOLSA BASURA P",
-"AMBIENT LIQ","AMBIENT MIC","PAÑUELOS CAJA"
+const PRODUCTS = [
+  "PAPEL Z", "PAPEL HIGIÉNICO", "PAPEL SECA MANOS",
+  "LIMPIA BAÑOS (A)", "FREGA SUELOS (M)", "JABÓN MANOS",
+  "LIMPIA CRISTALES", "LEJÍA", "GUANTES", "FREGONA", "ESCOBA",
+  "PLUMERO", "PALOS", "PAÑOS", "BOLSA BASURA G", "BOLSA BASURA P",
+  "AMBIENT LIQ", "AMBIENT MIC", "PAÑUELOS CAJA"
 ];
-const KEY="controlPedidos_v1";
-const $=id=>document.getElementById(id);
-let orders=[],draft=[];
-const today=new Date();
-const isoDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-$("date").value=isoDate(today);
-$("from").value=isoDate(new Date(today.getFullYear(),today.getMonth(),1));
-$("to").value=isoDate(today);
-$("product").innerHTML=PRODUCTS.map(p=>`<option>${p}</option>`).join("");
 
-function notice(msg){
- $("notice").textContent=msg;$("notice").style.display="block";
- window.scrollTo({top:0,behavior:"smooth"});
-}
-function load(){
- try{orders=JSON.parse(localStorage.getItem(KEY)||"[]");
- if(!Array.isArray(orders))throw Error();
- }catch(e){orders=[];notice("No se pudo leer el historial local. No importes nada hasta comprobar si tienes una copia.");}
-}
-function persist(){
- try{localStorage.setItem(KEY,JSON.stringify(orders));return true}
- catch(e){notice("No se pudo guardar. Exporta una copia y libera espacio.");return false}
-}
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-function id(){return Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8)}
-function showTab(tab){
- document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
- ["new","history","backup"].forEach(t=>$(t).classList.toggle("hidden",t!==tab));
- $("reportArea").classList.add("hidden");
- if(tab==="history")renderHistory();
-}
-document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+const DB_NAME = "ControlPedidosDB";
+const DB_VERSION = 1;
+const STORE = "orders";
+const LEGACY_KEY = "controlPedidos_v1";
 
-function renderDraft(){
- $("draft").innerHTML=draft.length?draft.map((p,i)=>`
- <div class="item"><div class="itemtop"><div><b>${esc(p.product)}</b><br><span class="small">${p.qty} unidades</span></div>
- <button class="danger" data-remove="${i}">Quitar</button></div></div>`).join(""):'<p class="small">Todavía no has añadido productos.</p>';
- $("draft").querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>{
- draft.splice(Number(b.dataset.remove),1);renderDraft()
- });
-}
-$("add").onclick=()=>{
- const product=$("product").value,qty=Number($("qty").value);
- if(!$("date").value)return notice("Indica la fecha.");
- if(!Number.isFinite(qty)||qty<=0)return notice("Introduce una cantidad mayor que cero.");
- draft.push({product,qty});
- $("qty").value="";renderDraft();
-};
-$("clearDraft").onclick=()=>{draft=[];renderDraft()};
-$("save").onclick=()=>{
- const date=$("date").value;
- if(!date)return notice("Indica la fecha.");
- if(!draft.length)return notice("Añade al menos un producto.");
- orders.push({id:id(),date,created:new Date().toISOString(),items:draft.map(p=>({...p}))});
- if(!persist()){orders.pop();return}
- draft=[];renderDraft();notice("Pedido guardado correctamente.");
-};
-function renderHistory(){
- const q=$("search").value.trim().toLocaleLowerCase("es");
- const list=[...orders].sort((a,b)=>b.date.localeCompare(a.date));
- const filtered=list.filter(o=>(o.date+" "+o.items.map(i=>i.product).join(" ")).toLocaleLowerCase("es").includes(q));
- $("historyList").innerHTML=filtered.length?filtered.map(o=>`
- <div class="item"><div class="itemtop"><b>${esc(o.date)}</b>
- <button class="danger" data-del="${esc(o.id)}">Eliminar</button></div>
- ${o.items.map(i=>`<div>${esc(i.product)} — <b>${i.qty}</b></div>`).join("")}
- </div>`).join(""):'<p class="small">No hay pedidos que coincidan.</p>';
- $("historyList").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
- if(!confirm("¿Eliminar este pedido? Exporta una copia antes si tienes dudas."))return;
- orders=orders.filter(o=>o.id!==b.dataset.del);
- if(persist())renderHistory();
- });
-}
-$("search").oninput=renderHistory;
+const $ = id => document.getElementById(id);
+let db;
+let orders = [];
+let draft = [];
 
-function download(name,data,type){
- const blob=new Blob([data],{type});
- const url=URL.createObjectURL(blob);
- const a=document.createElement("a");a.href=url;a.download=name;
- document.body.appendChild(a);a.click();a.remove();
- setTimeout(()=>URL.revokeObjectURL(url),1500);
+const today = new Date();
+const isoDate = d =>
+  `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+$("date").value = isoDate(today);
+$("from").value = isoDate(new Date(today.getFullYear(), today.getMonth(), 1));
+$("to").value = isoDate(today);
+$("product").innerHTML = PRODUCTS.map(p =>
+  `<option>${p}</option>`
+).join("");
+
+function notice(msg) {
+  $("notice").textContent = msg;
+  $("notice").style.display = "block";
+  window.scrollTo({top: 0, behavior: "smooth"});
 }
-$("export").onclick=()=>{
- const backup={app:"control-pedidos",version:1,exportedAt:new Date().toISOString(),products:PRODUCTS,orders};
- download("copia-pedidos-"+isoDate(new Date())+".json",JSON.stringify(backup,null,2),"application/json");
- notice("Copia preparada. Comprueba que se ha descargado y guárdala fuera del iPhone.");
-};
-$("csv").onclick=()=>{
- const rows=[["Pedido","Fecha","Producto","Cantidad"]];
- orders.forEach(o=>o.items.forEach(i=>rows.push([o.id,o.date,i.product,i.qty])));
- const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(";")).join("\r\n");
- download("pedidos.csv","\uFEFF"+csv,"text/csv;charset=utf-8");
-};
-$("restore").onchange=async e=>{
- const file=e.target.files[0];if(!file)return;
- try{
- const obj=JSON.parse(await file.text());
- if(obj.app!=="control-pedidos"||obj.version!==1||!Array.isArray(obj.orders))throw Error("Archivo no reconocido.");
- const valid=obj.orders.every(o=>typeof o.id==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(o.date)&&Array.isArray(o.items)&&o.items.every(i=>PRODUCTS.includes(i.product)&&Number.isFinite(i.qty)&&i.qty>0));
- if(!valid)throw Error("El archivo contiene datos inválidos.");
- if(!confirm("Se reemplazarán los "+orders.length+" pedidos actuales por "+obj.orders.length+" pedidos de la copia. ¿Continuar?"))return;
- const old=orders;orders=obj.orders;
- if(!persist()){orders=old;return}
- notice("Copia restaurada correctamente.");renderHistory();
- }catch(err){alert("No se pudo restaurar: "+err.message)}
- finally{e.target.value=""}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+  }[c]));
+}
+
+function id() {
+  return Date.now().toString(36) + "-" +
+    Math.random().toString(36).slice(2, 8);
+}
+
+/* 1. Abrir la base de datos local */
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("Este navegador no permite IndexedDB."));
+      return;
+    }
+
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+
+      if (!database.objectStoreNames.contains(STORE)) {
+        database.createObjectStore(STORE, {keyPath: "id"});
+      }
+    };
+
+    request.onsuccess = () => {
+      db = request.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
+
+    request.onerror = () =>
+      reject(request.error || new Error("No se pudo abrir la base de datos."));
+
+    request.onblocked = () =>
+      notice("Cierra otras pestañas de esta aplicación y vuelve a intentarlo.");
+  });
+}
+
+/* 2. Leer los pedidos */
+function getAllOrders() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const request = tx.objectStore(STORE).getAll();
+
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/* 3. Guardar un pedido */
+function saveOrder(order) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(order);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("Guardado cancelado."));
+  });
+}
+
+/* 4. Eliminar un pedido */
+function deleteOrder(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("Eliminación cancelada."));
+  });
+}
+
+/* 5. Restaurar una copia completa en una transacción */
+function replaceAllOrders(newOrders) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+
+    store.clear();
+    newOrders.forEach(order => store.put(order));
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("Restauración cancelada."));
+  });
+}
+
+/* 6. Migrar los datos antiguos de localStorage, si los hay */
+async function migrateOldData() {
+  const current = await getAllOrders();
+
+  if (current.length > 0) return;
+
+  let oldData;
+
+  try {
+    oldData = JSON.parse(localStorage.getItem(LEGACY_KEY) || "[]");
+  } catch {
+    return;
+  }
+
+  if (!Array.isArray(oldData) || oldData.length === 0) return;
+
+  const valid = oldData.every(o =>
+    o && typeof o.id === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(o.date) &&
+    Array.isArray(o.items) &&
+    o.items.every(i =>
+      PRODUCTS.includes(i.product) &&
+      Number.isFinite(i.qty) && i.qty > 0
+    )
+  );
+
+  if (!valid) {
+    notice("Hay datos antiguos que no se han migrado. Conserva tu copia JSON.");
+    return;
+  }
+
+  await replaceAllOrders(oldData);
+  notice("Se han recuperado los pedidos antiguos y migrado a IndexedDB.");
+}
+
+/* 7. Cambiar de sección */
+function showTab(tab) {
+  document.querySelectorAll("nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === tab)
+  );
+
+  ["new", "history", "backup"].forEach(t =>
+    $(t).classList.toggle("hidden", t !== tab)
+  );
+
+  $("reportArea").classList.add("hidden");
+
+  if (tab === "history") renderHistory();
+}
+
+document.querySelectorAll("nav button").forEach(b => {
+  b.onclick = () => showTab(b.dataset.tab);
+});
+
+/* 8. Lista temporal de productos */
+function renderDraft() {
+  $("draft").innerHTML = draft.length
+    ? draft.map((p, i) => `
+      <div class="item">
+        <div class="itemtop">
+          <div><b>${esc(p.product)}</b><br>
+          <span class="small">${p.qty} unidades</span></div>
+          <button class="danger" data-remove="${i}">Quitar</button>
+        </div>
+      </div>
+    `).join("")
+    : '<p class="small">Todavía no has añadido productos.</p>';
+
+  $("draft").querySelectorAll("[data-remove]").forEach(b => {
+    b.onclick = () => {
+      draft.splice(Number(b.dataset.remove), 1);
+      renderDraft();
+    };
+  });
+}
+
+$("add").onclick = () => {
+  const product = $("product").value;
+  const qty = Number($("qty").value);
+
+  if (!$("date").value) return notice("Indica la fecha.");
+  if (!Number.isFinite(qty) || qty <= 0)
+    return notice("Introduce una cantidad mayor que cero.");
+
+  draft.push({product, qty});
+  $("qty").value = "";
+  renderDraft();
 };
 
-function makeReport(){
- const from=$("from").value,to=$("to").value;
- if(!from||!to||from>to)return notice("Revisa las fechas del informe.");
- const selected=orders.filter(o=>o.date>=from&&o.date<=to).sort((a,b)=>a.date.localeCompare(b.date));
- const dates=[...new Set(selected.map(o=>o.date))].sort();
- const sums={};
- PRODUCTS.forEach(p=>sums[p]={});
- selected.forEach(o=>o.items.forEach(i=>sums[i.product][o.date]=(sums[i.product][o.date]||0)+i.qty));
- const table=`<h2>Control de entradas de pedidos</h2><p>Periodo: ${esc(from)} a ${esc(to)}</p>
- <table><thead><tr><th>Producto</th>${dates.map(d=>`<th>${esc(d)}</th>`).join("")}<th>Total</th></tr></thead><tbody>
- ${PRODUCTS.map(p=>{let total=0;return `<tr><td>${esc(p)}</td>${dates.map(d=>{const n=sums[p][d]||0;total+=n;return `<td>${n||""}</td>`}).join("")}<td>${total||""}</td></tr>`}).join("")}
- </tbody></table>`;
- $("reportArea").innerHTML=table;
- $("reportPreview").innerHTML=`<p>Pedidos encontrados: ${selected.length}. Fechas de recepción: ${dates.length}.</p>`;
- $("reportArea").classList.remove("hidden");
- notice("Informe preparado. Pulsa Imprimir / Guardar PDF.");
-}
-$("reportBtn").onclick=makeReport;
-$("print").onclick=()=>{
- if(!$("reportArea").innerHTML)return makeReport();
- window.print();
+$("clearDraft").onclick = () => {
+  draft = [];
+  renderDraft();
 };
-load();renderDraft();
+
+/* 9. Guardar en IndexedDB, no en localStorage */
+$("save").onclick = async () => {
+  const date = $("date").value;
+
+  if (!date) return notice("Indica la fecha.");
+  if (!draft.length) return notice("Añade al menos un producto.");
+
+  const order = {
+    id: id(),
+    date,
+    created: new Date().toISOString(),
+    items: draft.map(p => ({...p}))
+  };
+
+  try {
+    await saveOrder(order);
+    orders.push(order);
+    draft = [];
+    renderDraft();
+    notice("Pedido guardado en la base de datos local.");
+  } catch (e) {
+    notice("ERROR al guardar: " + (e.message || "almacenamiento no disponible"));
+  }
+};
+
+/* 10. Historial */
+function renderHistory() {
+  const q = $("search").value.trim().toLocaleLowerCase("es");
+
+  const filtered = [...orders]
+    .sort((a,b) => b.date.localeCompare(a.date))
+    .filter(o =>
+      (o.date + " " + o.items.map(i => i.product).join(" "))
+        .toLocaleLowerCase("es").includes(q)
+    );
+
+  $("historyList").innerHTML = filtered.length
+    ? filtered.map(o => `
+      <div class="item">
+        <div class="itemtop">
+          <b>${esc(o.date)}</b>
+          <button class="danger" data-del="${esc(o.id)}">Eliminar</button>
+        </div>
+        ${o.items.map(i =>
+          `<div>${esc(i.product)} — <b>${i.qty}</b></div>`
+        ).join("")}
+      </div>
+    `).join("")
+    : '<p class="small">No hay pedidos que coincidan.</p>';
+
+  $("historyList").querySelectorAll("[data-del]").forEach(b => {
+    b.onclick = async () => {
+      if (!confirm("¿Eliminar este pedido? Haz una copia si tienes dudas."))
+        return;
+
+      try {
+        await deleteOrder(b.dataset.del);
+        orders = orders.filter(o => o.id !== b.dataset.del);
+        renderHistory();
+        notice("Pedido eliminado.");
+      } catch (e) {
+        notice("No se pudo eliminar: " + e.message);
+      }
+    };
+  });
+}
+
+$("search").oninput = renderHistory;
+
+/* 11. Descargar archivos */
+function download(name, data, type) {
+  const blob = new Blob([data], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
+/* 12. Copia completa JSON */
+$("export").onclick = async () => {
+  try {
+    orders = await getAllOrders();
+
+    const backup = {
+      app: "control-pedidos",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      products: PRODUCTS,
+      orders
+    };
+
+    download(
+      "copia-pedidos-" + isoDate(new Date()) + ".json",
+      JSON.stringify(backup, null, 2),
+      "application/json"
+    );
+
+    notice("Copia preparada. Comprueba que el archivo se ha descargado.");
+  } catch (e) {
+    notice("No se pudo crear la copia: " + e.message);
+  }
+};
+
+/* 13. Exportación CSV */
+$("csv").onclick = async () => {
+  try {
+    orders = await getAllOrders();
+
+    const rows = [["Pedido", "Fecha", "Producto", "Cantidad"]];
+
+    orders.forEach(o =>
+      o.items.forEach(i => rows.push([o.id, o.date, i.product, i.qty]))
+    );
+
+    const csv = rows.map(r =>
+      r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(";")
+    ).join("\r\n");
+
+    download("pedidos.csv", "\uFEFF" + csv, "text/csv;charset=utf-8");
+    notice("CSV preparado.");
+  } catch (e) {
+    notice("No se pudo exportar: " + e.message);
+  }
+};
+
+/* 14. Restaurar JSON */
+$("restore").onchange = async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  try {
+    const obj = JSON.parse(await file.text());
+
+    if (
+      obj.app !== "control-pedidos" ||
+      obj.version !== 1 ||
+      !Array.isArray(obj.orders)
+    ) {
+      throw new Error("El archivo no es una copia reconocida.");
+    }
+
+    const valid = obj.orders.every(o =>
+      o && typeof o.id === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(o.date) &&
+      Array.isArray(o.items) &&
+      o.items.every(i =>
+        PRODUCTS.includes(i.product) &&
+        Number.isFinite(i.qty) && i.qty > 0
+      )
+    );
+
+    if (!valid) throw new Error("La copia contiene datos inválidos.");
+
+    if (!confirm(
+      "Se reemplazarán los " + orders.length +
+      " pedidos actuales por los " + obj.orders.length +
+      " pedidos de la copia. ¿Continuar?"
+    )) return;
+
+    await replaceAllOrders(obj.orders);
+    orders = await getAllOrders();
+    renderHistory();
+    notice("Copia restaurada correctamente.");
+  } catch (e) {
+    notice("No se pudo restaurar: " + e.message);
+  } finally {
+    e.target.value = "";
+  }
+};
+
+/* 15. Informe por fechas */
+function makeReport() {
+  const from = $("from").value;
+  const to = $("to").value;
+
+  if (!from || !to || from > to)
+    return notice("Revisa las fechas del informe.");
+
+  const selected = orders
+    .filter(o => o.date >= from && o.date <= to)
+    .sort((a,b) => a.date.localeCompare(b.date));
+
+  const dates = [...new Set(selected.map(o => o.date))].sort();
+  const sums = {};
+
+  PRODUCTS.forEach(p => sums[p] = {});
+
+  selected.forEach(o => o.items.forEach(i => {
+    sums[i.product][o.date] =
+      (sums[i.product][o.date] || 0) + i.qty;
+  }));
+
+  const table = `
+    <h2>Control de entradas de pedidos</h2>
+    <p>Periodo: ${esc(from)} a ${esc(to)}</p>
+    <table>
+      <thead><tr><th>Producto</th>
+        ${dates.map(d => `<th>${esc(d)}</th>`).join("")}
+        <th>Total</th>
+      </tr></thead>
+      <tbody>
+        ${PRODUCTS.map(p => {
+          let total = 0;
+          return `<tr><td>${esc(p)}</td>${
+            dates.map(d => {
+              const n = sums[p][d] || 0;
+              total += n;
+              return `<td>${n || ""}</td>`;
+            }).join("")
+          }<td>${total || ""}</td></tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+
+  $("reportArea").innerHTML = table;
+  $("reportPreview").innerHTML =
+    `<p>Pedidos encontrados: ${selected.length}. Fechas de recepción: ${dates.length}.</p>`;
+  $("reportArea").classList.remove("hidden");
+  notice("Informe preparado. Pulsa Imprimir / Guardar PDF.");
+}
+
+$("reportBtn").onclick = makeReport;
+
+$("print").onclick = () => {
+  if (!$("reportArea").innerHTML.trim()) {
+    makeReport();
+    return;
+  }
+  window.print();
+};
+
+/* 16. Arranque: abrir la base de datos y recuperar el historial */
+async function init() {
+  try {
+    await openDatabase();
+    await migrateOldData();
+    orders = await getAllOrders();
+    renderDraft();
+    renderHistory();
+    notice("Base de datos local lista. Pedidos cargados: " + orders.length);
+  } catch (e) {
+    notice("No se pudo abrir la base de datos local: " + e.message);
+  }
+}
+
+init();
 </script>
 </body>
 </html>
