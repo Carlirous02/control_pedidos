@@ -35,7 +35,7 @@ footer{font-size:12px;color:#65756a;padding:8px}
  body{max-width:none;background:white;padding:0;color:black}
  header,nav,.noprint,footer{display:none!important}
  section{border:0;padding:0;margin:0}
- #report{display:block!important}
+ #reportArea{display:block!important}
  table{width:100%;border-collapse:collapse;font-size:9pt}
  th,td{border:1px solid #999;padding:5px;text-align:center}
  th:first-child,td:first-child{text-align:left}
@@ -240,14 +240,14 @@ function makeReport(){
  <table><thead><tr><th>Producto</th>${dates.map(d=>`<th>${esc(d)}</th>`).join("")}<th>Total</th></tr></thead><tbody>
  ${PRODUCTS.map(p=>{let total=0;return `<tr><td>${esc(p)}</td>${dates.map(d=>{const n=sums[p][d]||0;total+=n;return `<td>${n||""}</td>`}).join("")}<td>${total||""}</td></tr>`}).join("")}
  </tbody></table>`;
- $("report").innerHTML=table;
+ $("reportArea").innerHTML=table;
  $("reportPreview").innerHTML=`<p>Pedidos encontrados: ${selected.length}. Fechas de recepción: ${dates.length}.</p>`;
- $("report").classList.remove("hidden");
+ $("reportArea").classList.remove("hidden");
  notice("Informe preparado. Pulsa Imprimir / Guardar PDF.");
 }
-$("report").onclick=makeReport;
+$("reportBtn").onclick=makeReport;
 $("print").onclick=()=>{
- if(!$("report").innerHTML)return makeReport();
+ if(!$("reportArea").innerHTML)return makeReport();
  window.print();
 };
 load();renderDraft();
